@@ -1,0 +1,14 @@
+{
+  "name": "lightr",
+  "version": "1.0.0",
+  "description": "Control hue lights",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Glenn Conner",
+  "license": "MIT",
+  "dependencies": {
+    "onoff": "^6.0.0"
+  }
+}
