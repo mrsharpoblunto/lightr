@@ -1,7 +1,8 @@
 const EventEmitter = require('events').EventEmitter;
 const Gpio = require('onoff').Gpio;
 const http = require('http');
-
+const fork = require('child_process').fork;
+const path = require('path');
 
 class RotaryEncoder extends EventEmitter {
 	constructor({a,b,toggle, inc}) {
@@ -9,26 +10,32 @@ class RotaryEncoder extends EventEmitter {
 		this.inc = inc;
 		this.gpioA = new Gpio(a, 'in', 'both');
 		this.gpioB = new Gpio(b, 'in', 'both');
-		this.gpioToggle = new Gpio(toggle, 'in', 'rising');
+		this.gpioToggle = new Gpio(toggle, 'in', 'rising', { debounceTimeout: 10 });
 		this.gpioA.watch((err, value) => {
-			this.a = value;
-		});
-		this.gpioB.watch((err, value) => {
-			this.b = value;
-			this.tick();
+			if (err) {
+				this.emit('error', err);
+				return;
+			}
+			const a = value;
+
+			try {
+				const b = this.gpioB.readSync();
+				if (a === b) {
+					this.emit('rotation', this.inc);
+				} else {
+					this.emit('rotation', -this.inc);
+				}
+			} catch (ex) {
+				this.emit('error', ex);
+			}
 		});
 		this.gpioToggle.watch((err, value) => {
+			if (err) {
+				this.emit('error', err);
+				return;
+			}
 			this.emit('toggle');
 		});
-	}
-	tick() {
-		const {a,b} = this;
-
-		if (a == 0 && b === 0 || a === 1 && b === 1) {
-			this.emit('rotation', this.inc);
-		} else if (a === 1 && b === 0 || a === 0 && b === 1 || a === 2 && b === 0) {
-			this.emit('rotation', -this.inc);
-		}
 	}
 }
 
@@ -56,8 +63,12 @@ class HueAPI {
 					body += data;
 				});
 				res.on('end', () => {
-					body = JSON.parse(body);
-					resolve(body);
+					let parsed; 
+					try {
+						parsed = JSON.parse(body);
+					} catch (ex) {
+					}
+					resolve({ statusCode: res.statusCode, body: parsed || body});
 				});
 			}).on('error', (e) => {
 				reject(e);
@@ -79,8 +90,12 @@ class HueAPI {
 					body += data;
 				});
 				res.on('end', () => {
-					body = JSON.parse(body);
-					resolve(body);
+					let parsed; 
+					try {
+						parsed = JSON.parse(body);
+					} catch (ex) {
+					}
+					resolve({ statusCode: res.statusCode, body: parsed || body});
 				});
 			});
 			req.on('error', (e) => {
@@ -92,7 +107,7 @@ class HueAPI {
 	}
 }
 
-function throttlePromise(fn,delay) {
+function throttlePromise(fn,{ debounce, delay } = { debounce: 0, delay: 0}) {
 	let running = false;
 	let waiting = false;
 	let start = Date.now();
@@ -109,10 +124,14 @@ function throttlePromise(fn,delay) {
 	};
 	const throttled = function(...args) {
 		if (running || waiting) {
+			if (debounce && (Date.now() - start < debounce)) {
+				return;
+			}
 			lastThis = this;
 			lastArgs = args;
 			return;
 		}
+		start = Date.now();
 		running = true;
 		if (delay) {
 			waiting = true;
@@ -138,13 +157,35 @@ function throttlePromise(fn,delay) {
 	return throttled;
 }
 
-const bridge = '192.168.0.4';
-const userId = 'O7nK3Cv1WUSGeOtiuzWbPCsxbjxCdIwmRFWPo72Z';
-const api = new HueAPI(bridge, userId);
-api.getGroup(7).then(group => {
-	console.log(group);
-	let on = group.action.on;
-	let waiting = false;
+function updateUI(groupId, api, worker) {
+	return api.getGroup(groupId).then(({ statusCode, body}) => {
+		worker.send(body);
+		return {statusCode, body};
+	});
+}
+
+const BRIDGE = '192.168.0.4';
+const USER_ID = 'O7nK3Cv1WUSGeOtiuzWbPCsxbjxCdIwmRFWPo72Z';
+const GROUP_ID = 8;
+const api = new HueAPI(BRIDGE, USER_ID);
+const uiWorker = fork(path.resolve('worker.js'), [], {
+	stdio: ['pipe', 'pipe', 'pipe', 'ipc']
+});
+uiWorker.on('exit', code => {
+	console.log('UI worker closed with code ' + code);
+});
+uiWorker.stdout.on('data', (data) => {
+	console.log(data.toString('utf8'));
+});
+uiWorker.stderr.on('data', (data) => {
+	console.log(data.toString('utf8'));
+});
+
+const updateGroupUI = updateUI.bind(this, GROUP_ID, api, uiWorker);
+
+updateGroupUI().then(({body}) => {
+	console.log(body);
+	let on = body.action.on;
 	const encoder = new RotaryEncoder({
 		a: 17,
 		b: 18,
@@ -152,21 +193,20 @@ api.getGroup(7).then(group => {
 		inc: 32
 	});
 	encoder.on('rotation', throttlePromise((value) => {
-		return api.putGroup(7, {
+		return api.putGroup(GROUP_ID, {
 			bri_inc: value
 		}).then(response => {
-			console.log(response);
+			console.log(response.body);
+			updateGroupUI();
 		});
-	}, 500));
+	}, {debounce: 100, delay: 500}));
 	encoder.on('toggle', throttlePromise(() => {
 		on = !on;
-		return api.putGroup(7, {
+		return api.putGroup(GROUP_ID, {
 			on: on
 		}).then(response => {
-			console.log(response);
+			console.log(response.body);
+			return updateGroupUI();
 		});
 	}));
 });
-
-
-
