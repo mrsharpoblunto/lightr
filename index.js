@@ -5,9 +5,8 @@ const fork = require('child_process').fork;
 const path = require('path');
 
 class RotaryEncoder extends EventEmitter {
-	constructor({a,b,toggle, inc}) {
+	constructor({a,b,toggle}) {
 		super();
-		this.inc = inc;
 		this.gpioA = new Gpio(a, 'in', 'both');
 		this.gpioB = new Gpio(b, 'in', 'both');
 		this.gpioToggle = new Gpio(toggle, 'in', 'rising', { debounceTimeout: 10 });
@@ -21,9 +20,9 @@ class RotaryEncoder extends EventEmitter {
 			try {
 				const b = this.gpioB.readSync();
 				if (a === b) {
-					this.emit('rotation', this.inc);
+					this.emit('rotation', 1);
 				} else {
-					this.emit('rotation', -this.inc);
+					this.emit('rotation', -1);
 				}
 			} catch (ex) {
 				this.emit('error', ex);
@@ -193,14 +192,16 @@ function updateUI(groupId, api, worker) {
 const BRIDGE = '192.168.0.4';
 const USER_ID = 'O7nK3Cv1WUSGeOtiuzWbPCsxbjxCdIwmRFWPo72Z';
 const GROUP_ID = 8;
+const FIELDS = {'bri_inc': 32, 'hue_inc': 4096, 'sat_inc': 32};
+
 const api = new HueAPI(BRIDGE, USER_ID);
 const uiWorker = new Worker();
-
 const updateGroupUI = updateUI.bind(this, GROUP_ID, api, uiWorker);
 
 updateGroupUI().then(({body}) => {
 	console.log(body);
-	let on = body.action.on;
+	let fieldIndex = 0;
+
 	const encoder = new RotaryEncoder({
 		a: 17,
 		b: 18,
@@ -208,14 +209,21 @@ updateGroupUI().then(({body}) => {
 		inc: 32
 	});
 	encoder.on('rotation', throttlePromise((value) => {
+		const field = Object.keys(FIELDS)[fieldIndex];
 		return api.putGroup(GROUP_ID, {
-			bri_inc: value
+			[field]: FIELDS[field] * value
 		}).then(response => {
 			console.log(response.body);
 			updateGroupUI();
 		});
 	}, {debounce: 100, delay: 500}));
-	encoder.on('toggle', throttlePromise(() => {
+	encoder.on('toggle',() => {// throttlePromise(() => {
+		fieldIndex++;
+		if (fieldIndex >= Object.keys(FIELDS).length) {
+			fieldIndex = 0;
+		}
+		console.log('Selected ' + Object.keys(FIELDS)[fieldIndex]);
+		/**
 		on = !on;
 		return api.putGroup(GROUP_ID, {
 			on: on
@@ -223,5 +231,6 @@ updateGroupUI().then(({body}) => {
 			console.log(response.body);
 			return updateGroupUI();
 		});
-	}));
+		*/
+	});
 });
