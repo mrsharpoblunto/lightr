@@ -106,7 +106,7 @@ class HueAPI {
 	}
 }
 
-function throttlePromise(fn,{ debounce, delay } = { debounce: 0, delay: 0}) {
+function throttlePromise(fn,{ reduce, debounce, delay } = { reduce: null, debounce: 0, delay: 0}) {
 	let running = false;
 	let waiting = false;
 	let start = Date.now();
@@ -127,7 +127,11 @@ function throttlePromise(fn,{ debounce, delay } = { debounce: 0, delay: 0}) {
 				return;
 			}
 			lastThis = this;
-			lastArgs = args;
+			if (reduce && lastArgs) {
+				lastArgs = reduce(lastArgs, args);
+			} else {
+				lastArgs = args;
+			}
 			return;
 		}
 		start = Date.now();
@@ -192,7 +196,7 @@ function updateUI(groupId, api, worker) {
 const BRIDGE = '192.168.0.4';
 const USER_ID = 'O7nK3Cv1WUSGeOtiuzWbPCsxbjxCdIwmRFWPo72Z';
 const GROUP_ID = 8;
-const FIELDS = {'bri_inc': 32, 'hue_inc': 4096, 'sat_inc': 32};
+const FIELDS = {'bri_inc': 8, 'hue_inc': 1024, 'sat_inc': 8};
 
 const api = new HueAPI(BRIDGE, USER_ID);
 const uiWorker = new Worker();
@@ -216,7 +220,11 @@ updateGroupUI().then(({body}) => {
 			console.log(response.body);
 			updateGroupUI();
 		});
-	}, {debounce: 100, delay: 500}));
+	}, {
+		debounce: 100, 
+		delay: 500, 
+		reduce: (prev, next) => [prev[0] + next[0]]
+	}));
 	encoder.on('toggle',() => {// throttlePromise(() => {
 		fieldIndex++;
 		if (fieldIndex >= Object.keys(FIELDS).length) {

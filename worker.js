@@ -25,29 +25,29 @@ function getDay(date) {
 function getMonth(date) {
 	switch (date.getMonth()) {
 		case 0:
-			return 'Jan';
+			return 'January';
 		case 1:
-			return 'Feb';
+			return 'February';
 		case 2:
-			return 'Mar';
+			return 'March';
 		case 3: 
-			return 'Apr';
+			return 'April';
 		case 4:
 			return 'May';
 		case 5:
-			return 'Jun';
+			return 'June';
 		case 6: 
-			return 'Jul';
+			return 'July';
 		case 7: 
-			return 'Aug';
+			return 'August';
 		case 8: 
-			return 'Sep';
+			return 'September';
 		case 9: 
-			return 'Oct';
+			return 'October';
 		case 10: 
-			return 'Nov';
+			return 'November';
 		case 11: 
-			return 'Dec';
+			return 'December';
 	}
 }
 
@@ -74,7 +74,9 @@ process.on('message', (message) => {
 
 			try {
 				console.log(m.action);
+				oled.stopScroll();
 				if (!prevState) {
+					oled.dimDisplay(false);
 					oled.clearDisplay(false);
 					oled.setCursor(1, 1);
 					oled.writeString(font, 1, 'Light: ', 1, false);
@@ -124,19 +126,22 @@ process.on('message', (message) => {
 });
 
 setInterval(() => {
-	const now = new Date();
-	if (prevTime && now.getMinutes() === prevTime.getMinutes()) {
-		return;
-	}
 	if (Date.now() - idleStart > IDLE_TIME) {
 		prevState = null;
+		const now = new Date();
 		try {
-			oled.clearDisplay(false);
-			oled.setCursor(1, 1);
-			oled.writeString(font, 1, getDay(now) + ' ' + getMonth(now) + ' ' + now.getDate(), 1, false);
-			oled.setCursor(1, 18);
-			oled.writeString(font, 4, now.getHours() + ':' + now.getMinutes().toString().padStart(2,'0'), 1, false);
-			oled.update();
+			if (!prevTime || now.getMinutes() !== prevTime.getMinutes()) {
+				oled.clearDisplay(false);
+				oled.setCursor(1, 1);
+				oled.writeString(font, 1, getDay(now) + ' ' + getMonth(now) + ' ' + now.getDate(), 1, false);
+				oled.setCursor(11, 22);
+				oled.writeString(font, 4, now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0'), 1, false);
+				oled.update();
+			}
+			if (!prevTime) {
+				oled.startScroll('left', 0,1);
+				oled.dimDisplay(true);
+			}
 		} catch (err) {
 			process.exit(1);
 		}
