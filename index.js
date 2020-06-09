@@ -157,6 +157,32 @@ function throttlePromise(fn,{ debounce, delay } = { debounce: 0, delay: 0}) {
 	return throttled;
 }
 
+class Worker {
+	constructor() {
+		this._createWorker();
+	}
+	_createWorker() {
+		this._worker = fork(path.resolve('worker.js'), [], {
+			stdio: ['pipe', 'pipe', 'pipe', 'ipc']
+		});
+		this._worker.stdout.on('data', (data) => {
+			console.log(data.toString('utf8'));
+		});
+		this._worker.stderr.on('data', (data) => {
+			console.log(data.toString('utf8'));
+		});
+		this._worker.on('exit', code => {
+			if (code === 1) {
+				console.log('Restarting Worker...');
+				this._createWorker();
+			}
+		});
+	}
+	send(message) {
+		this._worker.send(message);
+	}
+}
+
 function updateUI(groupId, api, worker) {
 	return api.getGroup(groupId).then(({ statusCode, body}) => {
 		worker.send(body);
@@ -168,18 +194,7 @@ const BRIDGE = '192.168.0.4';
 const USER_ID = 'O7nK3Cv1WUSGeOtiuzWbPCsxbjxCdIwmRFWPo72Z';
 const GROUP_ID = 8;
 const api = new HueAPI(BRIDGE, USER_ID);
-const uiWorker = fork(path.resolve('worker.js'), [], {
-	stdio: ['pipe', 'pipe', 'pipe', 'ipc']
-});
-uiWorker.on('exit', code => {
-	console.log('UI worker closed with code ' + code);
-});
-uiWorker.stdout.on('data', (data) => {
-	console.log(data.toString('utf8'));
-});
-uiWorker.stderr.on('data', (data) => {
-	console.log(data.toString('utf8'));
-});
+const uiWorker = new Worker();
 
 const updateGroupUI = updateUI.bind(this, GROUP_ID, api, uiWorker);
 

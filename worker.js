@@ -18,15 +18,20 @@ process.on('message', (message) => {
 		process.nextTick(() => {
 			const m = queuedMessage;
 			queuedMessage = null;
-			oled.clearDisplay();
-			oled.setCursor(1, 1);
-			oled.writeString(font, 1, 'Light: ' + (m.action.on ? 'On': 'Off'), 1, true);
-			oled.setCursor(1, 18);
-			oled.writeString(font, 1, 'H: ' + m.action.hue, 1, true);
-			oled.setCursor(1, 28);
-			oled.writeString(font, 1, 'S: ' + m.action.sat, 1, true);
-			oled.setCursor(1, 38);
-			oled.writeString(font, 1, 'L: ' + m.action.bri, 1, true);
+			try {
+				oled.clearDisplay(false);
+				oled.setCursor(1, 1);
+				oled.writeString(font, 1, 'Light: ' + (m.action.on ? 'On': 'Off'), 1, false);
+				oled.setCursor(1, 18);
+				oled.writeString(font, 1, 'H: ' + m.action.hue, 1, false);
+				oled.setCursor(1, 28);
+				oled.writeString(font, 1, 'S: ' + m.action.sat, 1, false);
+				oled.setCursor(1, 38);
+				oled.writeString(font, 1, 'L: ' + m.action.bri, 1, false);
+				oled.update();
+			} catch (err) {
+				process.exit(1);
+			}
 		});
 	}
 	queuedMessage = message;
