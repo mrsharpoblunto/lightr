@@ -186,24 +186,56 @@ class Worker {
 	}
 }
 
-function updateUI(groupId, api, worker) {
-	return api.getGroup(groupId).then(({ statusCode, body}) => {
-		worker.send(body);
-		return {statusCode, body};
-	});
+let groupState = null;
+
+
+class LightGroupController {
+	constructor(groupId, api, worker) {
+		this.groupId = groupId;
+		this.api = api;
+		this.worker = worker;
+		this.groupState = null;
+	}
+
+	refresh() {
+		return this.api.getGroup(this.groupId).then(({ statusCode, body}) => {
+			this.groupState = body.action;
+			this.worker.send(body.action);
+			return this.groupState;
+		});
+	}
+	update(change) {
+		if (this.groupState) {
+			Object.keys(change).forEach(k => {
+				if (typeof change[k] === 'number') {
+					this.groupState[k] += change[k]
+				} else {
+					this.groupState[k] = change[k]
+				}
+			});
+			this.worker.send(this.groupState);
+		}
+
+		return this.api.putGroup(this.groupId, Object.keys(change).reduce((prev, next) => {
+			const value = change[next];
+			prev[next + (typeof value  === 'number' ? '_inc' : '')] = value;
+			return prev;
+		}, {})).then(response => {
+			this.refresh();
+		});
+	}
 }
 
 const BRIDGE = '192.168.0.4';
 const USER_ID = 'O7nK3Cv1WUSGeOtiuzWbPCsxbjxCdIwmRFWPo72Z';
 const GROUP_ID = 8;
-const FIELDS = {'bri_inc': 8, 'hue_inc': 1024, 'sat_inc': 8};
+const FIELDS = {'bri': 8, 'hue': 1024, 'sat': 8};
 
 const api = new HueAPI(BRIDGE, USER_ID);
 const uiWorker = new Worker();
-const updateGroupUI = updateUI.bind(this, GROUP_ID, api, uiWorker);
+const controller = new LightGroupController(GROUP_ID, api, uiWorker);
 
-updateGroupUI().then(({body}) => {
-	console.log(body);
+controller.refresh().then((state) => {
 	let fieldIndex = 0;
 
 	const encoder = new RotaryEncoder({
@@ -212,19 +244,20 @@ updateGroupUI().then(({body}) => {
 		toggle: 27, 
 		inc: 32
 	});
+
 	encoder.on('rotation', throttlePromise((value) => {
 		const field = Object.keys(FIELDS)[fieldIndex];
-		return api.putGroup(GROUP_ID, {
-			[field]: FIELDS[field] * value
-		}).then(response => {
-			console.log(response.body);
-			updateGroupUI();
+		const change = FIELDS[field] * value;
+		return controller.update({
+			[field]: change,
+			'on': true
 		});
 	}, {
-		debounce: 100, 
+		debounce: 10, 
 		delay: 500, 
 		reduce: (prev, next) => [prev[0] + next[0]]
 	}));
+
 	encoder.on('toggle',() => {// throttlePromise(() => {
 		fieldIndex++;
 		if (fieldIndex >= Object.keys(FIELDS).length) {

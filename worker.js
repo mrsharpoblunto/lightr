@@ -73,47 +73,53 @@ process.on('message', (message) => {
 			queuedMessage = null;
 
 			try {
-				console.log(m.action);
-				oled.stopScroll();
-				if (!prevState) {
-					oled.dimDisplay(false);
-					oled.clearDisplay(false);
-					oled.setCursor(1, 1);
-					oled.writeString(font, 1, 'Light: ', 1, false);
-					oled.setCursor(1, 18);
-					oled.writeString(font, 2, 'H', 1, false);
-					oled.setCursor(1, 34);
-					oled.writeString(font, 2, 'S', 1, false);
-					oled.setCursor(1, 50);
-					oled.writeString(font, 2, 'L', 1, false);
+				// don't redraw if the state is the same as it was previously
+				if (!prevState || JSON.stringify(m) !== JSON.stringify(prevState)) {
+					if (!prevState) {
+						oled.stopScroll();
+						oled.dimDisplay(false);
+						oled.clearDisplay(false);
+						oled.setCursor(1, 1);
+						oled.writeString(font, 1, 'Light: ', 1, false);
+						oled.setCursor(1, 18);
+						oled.writeString(font, 2, 'H', 1, false);
+						oled.setCursor(1, 34);
+						oled.writeString(font, 2, 'S', 1, false);
+						oled.setCursor(1, 50);
+						oled.writeString(font, 2, 'L', 1, false);
+					}
+
+					if (!prevState || prevState.on !== m.on) { 
+						oled.setCursor(38, 1);
+						oled.writeString(font, 1, m.on ? 'On ': 'Off', 1, false);
+					}
+
+					const getProgress = (value, max) => {
+						return Math.max(0, Math.round((Math.min(value, max) / max) * (127-15)));
+					};
+
+					if (!prevState || prevState.hue !== m.hue) {
+						oled.fillRect(14, 18, 127, 14, 1);
+						let hProgress = getProgress(m.hue, 65535.0);
+						oled.fillRect(15 + hProgress, 19, (127-15-hProgress), 12, 0);
+					}
+
+					if (!prevState || prevState.sat !== m.sat) {
+						oled.fillRect(14, 34, 127, 14, 1);
+						let sProgress = getProgress(m.sat, 254.0);
+						oled.fillRect(15 + sProgress, 35, (127-15-sProgress), 12, 0);
+					}
+
+					if (!prevState || prevState.bri !== m.bri) {
+						oled.fillRect(14, 50, 127, 14, 1);
+						let lProgress = getProgress(m.bri, 254.0);
+						oled.fillRect(15 + lProgress, 51, (127-15-lProgress), 12, 0);
+					}
+
+					oled.update();
+
+					prevState = m;
 				}
-
-				if (!prevState || prevState.on !== m.action.on) { 
-					oled.setCursor(38, 1);
-					oled.writeString(font, 1, m.action.on ? 'On ': 'Off', 1, false);
-				}
-
-				if (!prevState || prevState.hue !== m.action.hue) {
-					oled.fillRect(14, 18, 127, 14, 1);
-					let hProgress = Math.round((m.action.hue / 65535.0) * (127-15));
-					oled.fillRect(15 + hProgress, 19, (127-15-hProgress), 12, 0);
-				}
-
-				if (!prevState || prevState.sat !== m.action.sat) {
-					oled.fillRect(14, 34, 127, 14, 1);
-					let sProgress = Math.round((m.action.sat / 254.0) * (127-15));
-					oled.fillRect(15 + sProgress, 35, (127-15-sProgress), 12, 0);
-				}
-
-				if (!prevState || prevState.bri !== m.action.bri) {
-					oled.fillRect(14, 50, 127, 14, 1);
-					let lProgress = Math.round((m.action.bri / 254.0) * (127-15));
-					oled.fillRect(15 + lProgress, 51, (127-15-lProgress), 12, 0);
-				}
-
-				oled.update();
-
-				prevState = m.action;
 			} catch (err) {
 				process.exit(1);
 			}
