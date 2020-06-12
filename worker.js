@@ -3,6 +3,39 @@ const i2cBus = i2c.openSync(1);
 const Oled = require('oled-i2c-bus');
 const font = require('oled-font-5x7');
 
+class UIRenderer {
+  constructor() {
+    this.oled = new Oled(i2cBus, {
+      width: 128,
+      height: 64,
+      address: 0x3C
+  }); 
+    this.renderers = {};
+    this.currentMode = null;
+    this.currentState = null;
+  }
+  addRenderer(mode, renderer) {
+    this.renderers[mode] = renderer;
+    return this;
+  }
+  render(newMode, newState) {
+      if (newMode !== this.currentMode) {
+        this.currentState = null;
+      }
+
+			try {
+        const renderer = this.renderers[newMode];
+        renderer(this.currentState, newState, this.oled);
+        this.currentState = newState;
+			} catch (err) {
+        console.log(err.stack);
+				process.exit(1);
+			}
+
+      this.currentMode = newMode;
+  }
+}
+
 function getDay(date) {
 	switch (date.getDay()) {
 		case 0:
@@ -51,16 +84,102 @@ function getMonth(date) {
 	}
 }
 
+process.on('uncaughtException', (err) => {
+  console.error(err.stack);
+  process.exit(1);
+});
+
+const uiRenderer = new UIRenderer()
+  .addRenderer('lightgroup_control', (prev,next, oled) => {
+    if (prev && JSON.stringify(next) === JSON.stringify(prev)) {
+      return;
+    }
+    if (!prev) {
+      oled.stopScroll();
+      oled.dimDisplay(false);
+      oled.clearDisplay(false);
+      oled.setCursor(1, 1);
+      oled.writeString(font, 1, 'Light: ', 1, false);
+      oled.setCursor(1, 18);
+      oled.writeString(font, 2, 'H', 1, false);
+      oled.setCursor(1, 34);
+      oled.writeString(font, 2, 'S', 1, false);
+      oled.setCursor(1, 50);
+      oled.writeString(font, 2, 'L', 1, false);
+    }
+
+    if (!prev || prev.on !== next.on) { 
+      oled.setCursor(38, 1);
+      oled.writeString(font, 1, next.on ? 'On ': 'Off', 1, false);
+    }
+
+    const getProgress = (value, max) => {
+      return Math.max(0, Math.round((Math.min(value, max) / max) * (127-15)));
+    };
+
+    if (!prev || prev.hue !== next.hue) {
+      oled.fillRect(14, 18, 127, 14, 1);
+      let hProgress = getProgress(next.hue, 65535.0);
+      oled.fillRect(15 + hProgress, 19, (127-15-hProgress), 12, 0);
+    }
+
+    if (!prev || prev.sat !== next.sat) {
+      oled.fillRect(14, 34, 127, 14, 1);
+      let sProgress = getProgress(next.sat, 254.0);
+      oled.fillRect(15 + sProgress, 35, (127-15-sProgress), 12, 0);
+    }
+
+    if (!prev || prev.bri !== next.bri) {
+      oled.fillRect(14, 50, 127, 14, 1);
+      let lProgress = getProgress(next.bri, 254.0);
+      oled.fillRect(15 + lProgress, 51, (127-15-lProgress), 12, 0);
+    }
+
+    oled.update();
+  }).addRenderer('lightgroup_select', (prev, next, oled) => {
+    if (prev && JSON.stringify(prev) === JSON.stringify(next)) {
+      return;
+    }
+
+    oled.stopScroll();
+    oled.dimDisplay(false);
+    oled.clearDisplay(false);
+
+    const selectedIndex = next.selected;
+    const start = Math.max(0, selectedIndex - 2);
+    const end = Math.min(next.options.length, start + 5);
+
+    let i = 0;
+    for (let index = start; index < end; ++index) {
+      if (index === selectedIndex) {
+        oled.setCursor(1, 11  + (7 * i));
+        oled.writeString(font, 1, '>', false);
+      }
+      oled.setCursor(6, 11 + (7 * i++));
+      oled.writeString(font,1, next.options[index], 1, false);
+    }
+
+    oled.update();
+  }).addRenderer('clock', (prev, next, oled) => {
+    if (prev && next.getMinutes() === prev.getMinutes()) {
+      return;
+    }
+    oled.clearDisplay(false);
+    oled.setCursor(1, 1);
+    oled.writeString(font, 1, getDay(next) + ' ' + getMonth(next) + ' ' + next.getDate(), 1, false);
+    oled.setCursor(11, 22);
+    oled.writeString(font, 4, next.getHours().toString().padStart(2,'0') + ':' + next.getMinutes().toString().padStart(2,'0'), 1, false);
+    oled.update();
+
+    if (!prev) {
+      oled.startScroll('left', 0,1);
+      oled.dimDisplay(true);
+    }
+  });
+
 const IDLE_TIME = 10000;
-const oled = new Oled(i2cBus, {
-	  width: 128,
-	  height: 64,
-	  address: 0x3C
-}); 
 let queuedMessage = null;
 let idleStart = Date.now();
-let prevTime = null;
-let prevState = null;
 
 process.on('message', (message) => {
 	// rendering is real slow, so keep just the last UI state change around
@@ -71,60 +190,7 @@ process.on('message', (message) => {
 		process.nextTick(() => {
 			const m = queuedMessage;
 			queuedMessage = null;
-
-			try {
-				// don't redraw if the state is the same as it was previously
-				if (!prevState || JSON.stringify(m) !== JSON.stringify(prevState)) {
-					if (!prevState) {
-						oled.stopScroll();
-						oled.dimDisplay(false);
-						oled.clearDisplay(false);
-						oled.setCursor(1, 1);
-						oled.writeString(font, 1, 'Light: ', 1, false);
-						oled.setCursor(1, 18);
-						oled.writeString(font, 2, 'H', 1, false);
-						oled.setCursor(1, 34);
-						oled.writeString(font, 2, 'S', 1, false);
-						oled.setCursor(1, 50);
-						oled.writeString(font, 2, 'L', 1, false);
-					}
-
-					if (!prevState || prevState.on !== m.on) { 
-						oled.setCursor(38, 1);
-						oled.writeString(font, 1, m.on ? 'On ': 'Off', 1, false);
-					}
-
-					const getProgress = (value, max) => {
-						return Math.max(0, Math.round((Math.min(value, max) / max) * (127-15)));
-					};
-
-					if (!prevState || prevState.hue !== m.hue) {
-						oled.fillRect(14, 18, 127, 14, 1);
-						let hProgress = getProgress(m.hue, 65535.0);
-						oled.fillRect(15 + hProgress, 19, (127-15-hProgress), 12, 0);
-					}
-
-					if (!prevState || prevState.sat !== m.sat) {
-						oled.fillRect(14, 34, 127, 14, 1);
-						let sProgress = getProgress(m.sat, 254.0);
-						oled.fillRect(15 + sProgress, 35, (127-15-sProgress), 12, 0);
-					}
-
-					if (!prevState || prevState.bri !== m.bri) {
-						oled.fillRect(14, 50, 127, 14, 1);
-						let lProgress = getProgress(m.bri, 254.0);
-						oled.fillRect(15 + lProgress, 51, (127-15-lProgress), 12, 0);
-					}
-
-					oled.update();
-
-					prevState = m;
-				}
-			} catch (err) {
-				process.exit(1);
-			}
-
-			prevTime = null;
+      uiRenderer.render(m.mode, m.state);
 			idleStart = Date.now();
 		});
 	}
@@ -133,24 +199,7 @@ process.on('message', (message) => {
 
 setInterval(() => {
 	if (Date.now() - idleStart > IDLE_TIME) {
-		prevState = null;
-		const now = new Date();
-		try {
-			if (!prevTime || now.getMinutes() !== prevTime.getMinutes()) {
-				oled.clearDisplay(false);
-				oled.setCursor(1, 1);
-				oled.writeString(font, 1, getDay(now) + ' ' + getMonth(now) + ' ' + now.getDate(), 1, false);
-				oled.setCursor(11, 22);
-				oled.writeString(font, 4, now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0'), 1, false);
-				oled.update();
-			}
-			if (!prevTime) {
-				oled.startScroll('left', 0,1);
-				oled.dimDisplay(true);
-			}
-		} catch (err) {
-			process.exit(1);
-		}
-		prevTime = now;
+    uiRenderer.render('clock', new Date());
 	}
 }, 1000);
+

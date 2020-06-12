@@ -43,6 +43,9 @@ class HueAPI {
 		this.bridge = bridge;
 		this.user = user;
 	}
+  getGroups() {
+    return this._httpGet('/groups');
+  }
 	getGroup(groupId) {
 		return this._httpGet('/groups/' + groupId);
 	}
@@ -181,8 +184,8 @@ class Worker {
 			}
 		});
 	}
-	send(message) {
-		this._worker.send(message);
+	send(mode, state) {
+		this._worker.send({ mode, state });
 	}
 }
 
@@ -200,7 +203,7 @@ class LightGroupController {
 	refresh() {
 		return this.api.getGroup(this.groupId).then(({ statusCode, body}) => {
 			this.groupState = body.action;
-			this.worker.send(body.action);
+			this.worker.send('lightgroup_control', body.action);
 			return this.groupState;
 		});
 	}
@@ -213,7 +216,7 @@ class LightGroupController {
 					this.groupState[k] = change[k]
 				}
 			});
-			this.worker.send(this.groupState);
+			this.worker.send('lightgroup_control',this.groupState);
 		}
 
 		return this.api.putGroup(this.groupId, Object.keys(change).reduce((prev, next) => {
@@ -232,7 +235,16 @@ const GROUP_ID = 8;
 const FIELDS = {'bri': 8, 'hue': 1024, 'sat': 8};
 
 const api = new HueAPI(BRIDGE, USER_ID);
+
 const uiWorker = new Worker();
+
+api.getGroups().then((response) => uiWorker.send('lightgroup_select', { 
+  selected: 0, 
+  options: Object.keys(response.body).map(i => response.body[i].name)
+}));
+/**
+
+
 const controller = new LightGroupController(GROUP_ID, api, uiWorker);
 
 controller.refresh().then((state) => {
@@ -272,6 +284,6 @@ controller.refresh().then((state) => {
 			console.log(response.body);
 			return updateGroupUI();
 		});
-		*/
 	});
 });
+*/
