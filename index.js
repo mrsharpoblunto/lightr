@@ -3,6 +3,14 @@ const Gpio = require('onoff').Gpio;
 const http = require('http');
 const fork = require('child_process').fork;
 const path = require('path');
+const storage = require('node-persist');
+const {
+  bridgeIp, 
+  userId, 
+  aPin, bPin, togglePin
+} = require('./config.json');
+
+const FIELDS = {'bri': 8, 'hue': 1024, 'sat': 8};
 
 class RotaryEncoder extends EventEmitter {
 	constructor({a,b,toggle}) {
@@ -189,101 +197,131 @@ class Worker {
 	}
 }
 
-let groupState = null;
-
-
 class LightGroupController {
 	constructor(groupId, api, worker) {
 		this.groupId = groupId;
 		this.api = api;
 		this.worker = worker;
 		this.groupState = null;
+    this.fieldIndex = 0;
 	}
 
-	refresh() {
-		return this.api.getGroup(this.groupId).then(({ statusCode, body}) => {
-			this.groupState = body.action;
-			this.worker.send('lightgroup_control', body.action);
-			return this.groupState;
-		});
+	async init() {
+		const {statusCode, body} = await this.api.getGroup(this.groupId);
+    this.groupState = body.action;
+    this.worker.send('lightgroup_control', body.action);
+    return this.groupState;
 	}
-	update(change) {
-		if (this.groupState) {
-			Object.keys(change).forEach(k => {
-				if (typeof change[k] === 'number') {
-					this.groupState[k] += change[k]
-				} else {
-					this.groupState[k] = change[k]
-				}
-			});
-			this.worker.send('lightgroup_control',this.groupState);
-		}
 
-		return this.api.putGroup(this.groupId, Object.keys(change).reduce((prev, next) => {
-			const value = change[next];
-			prev[next + (typeof value  === 'number' ? '_inc' : '')] = value;
-			return prev;
-		}, {})).then(response => {
-			this.refresh();
-		});
+	async onEvent(event, args) {
+    switch (event) {
+      case 'rotation': {
+        const field = Object.keys(FIELDS)[this.fieldIndex];
+        const change = {
+          [field]: FIELDS[field] * args,
+          'on': true
+        };
+        if (this.groupState) {
+          Object.keys(change).forEach(k => {
+            if (typeof change[k] === 'number') {
+              this.groupState[k] += change[k]
+            } else {
+              this.groupState[k] = change[k]
+            }
+          });
+          this.worker.send('lightgroup_control',this.groupState);
+        }
+
+        const response = await this.api.putGroup(this.groupId, Object.keys(change).reduce((prev, next) => {
+          const value = change[next];
+          prev[next + (typeof value  === 'number' ? '_inc' : '')] = value;
+          return prev;
+        }, {}));
+        await this.init();
+        break;
+      }
+
+      case 'toggle': {
+        this.fieldIndex++;
+        if (this.fieldIndex >= Object.keys(FIELDS).length) {
+          this.fieldIndex = 0;
+        }
+        break;
+      }
+    }
 	}
 }
 
-const BRIDGE = '192.168.0.4';
-const USER_ID = 'O7nK3Cv1WUSGeOtiuzWbPCsxbjxCdIwmRFWPo72Z';
-const GROUP_ID = 8;
-const FIELDS = {'bri': 8, 'hue': 1024, 'sat': 8};
+class LightGroupSelector {
+  constructor(api, uiWorker) {
+    this.api = api;
+    this.worker = uiWorker;
+    this.selected = 0;
 
-const api = new HueAPI(BRIDGE, USER_ID);
+  }
+  async init() {
+    const response = await this.api.getGroups();
+    this.options = Object.keys(response.body).map(i => ({ key: parseInt(i, 10), value: response.body[i].name }));
+    this.worker.send('lightgroup_select', { 
+      selected: this.selected, 
+      options: this.options
+    });
+  }
 
-const uiWorker = new Worker();
+  async onEvent(event, args) {
+    switch (event) {
+      case 'rotation': {
+        this.selected += (args > 0 ? 1: -1);
+        if (this.selected >= this.options.length) {
+          this.selected = this.options.length - 1;
+        } else if (this.selected < 0) {
+          this.selected = 0;
+        }
+        this.worker.send('lightgroup_select', { 
+          selected: this.selected, 
+          options: this.options
+        });
+        break;
+      }
 
-api.getGroups().then((response) => uiWorker.send('lightgroup_select', { 
-  selected: 0, 
-  options: Object.keys(response.body).map(i => response.body[i].name)
-}));
-/**
+      case 'toggle': {
+        const groupId = this.options[this.selected].key;
+        console.log('Selected groupId: ' + groupId);
+        await storage.setItem('groupId', groupId);
+        const newController = new LightGroupController(groupId, this.api, this.worker);
+        await newController.init();
+        controller = newController;
+        break;
+      }
+    }
+  }
+}
 
+let controller = null;
 
-const controller = new LightGroupController(GROUP_ID, api, uiWorker);
+storage.init().then(async () => {
+  const api = new HueAPI(bridgeIp, userId);
+  const uiWorker = new Worker();
+  const encoder = new RotaryEncoder({
+    a: aPin,
+    b: bPin,
+    toggle: togglePin
+  });
 
-controller.refresh().then((state) => {
-	let fieldIndex = 0;
+  const groupId = await storage.getItem('groupId');
+  if (!groupId) {
+    controller = new LightGroupSelector(api, uiWorker);
+  } else {
+    console.log('Controlling groupId: ' + groupId);
+    controller = new LightGroupController(groupId, api, uiWorker);
+  }
+  await controller.init();
 
-	const encoder = new RotaryEncoder({
-		a: 17,
-		b: 18,
-		toggle: 27, 
-		inc: 32
-	});
-
-	encoder.on('rotation', throttlePromise((value) => {
-		const field = Object.keys(FIELDS)[fieldIndex];
-		const change = FIELDS[field] * value;
-		return controller.update({
-			[field]: change,
-			'on': true
-		});
-	}, {
-		debounce: 10, 
+	encoder.on('rotation', throttlePromise((value) => controller.onEvent('rotation', value), {
+		debounce: 100, 
 		delay: 500, 
 		reduce: (prev, next) => [prev[0] + next[0]]
 	}));
 
-	encoder.on('toggle',() => {// throttlePromise(() => {
-		fieldIndex++;
-		if (fieldIndex >= Object.keys(FIELDS).length) {
-			fieldIndex = 0;
-		}
-		console.log('Selected ' + Object.keys(FIELDS)[fieldIndex]);
-		/**
-		on = !on;
-		return api.putGroup(GROUP_ID, {
-			on: on
-		}).then(response => {
-			console.log(response.body);
-			return updateGroupUI();
-		});
-	});
+	encoder.on('toggle',() => controller.onEvent('toggle'));
 });
-*/

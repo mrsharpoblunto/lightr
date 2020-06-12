@@ -1,0 +1,7 @@
+{
+  "bridgeIp": "192.168.0.4",
+  "userId": "xyzzy",
+  "aPin": 17,
+  "bPin": 18,
+  "togglePin": 27
+}

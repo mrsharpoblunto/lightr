@@ -149,14 +149,16 @@ const uiRenderer = new UIRenderer()
     const start = Math.max(0, selectedIndex - 2);
     const end = Math.min(next.options.length, start + 5);
 
+    oled.setCursor(1, 1);
+    oled.writeString(font, 1, 'Choose light group:', false);
     let i = 0;
     for (let index = start; index < end; ++index) {
       if (index === selectedIndex) {
-        oled.setCursor(1, 11  + (7 * i));
+        oled.setCursor(1, 18  + (8 * i));
         oled.writeString(font, 1, '>', false);
       }
-      oled.setCursor(6, 11 + (7 * i++));
-      oled.writeString(font,1, next.options[index], 1, false);
+      oled.setCursor(8, 18 + (8 * i++));
+      oled.writeString(font,1, next.options[index].value, 1, false);
     }
 
     oled.update();
