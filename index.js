@@ -7,18 +7,37 @@ const storage = require('node-persist');
 const {
   bridgeIp, 
   userId, 
-  aPin, bPin, togglePin
+  a1Pin, b1Pin, toggle1Pin,
+  a2Pin, b2Pin, toggle2Pin,
+  a3Pin, b3Pin, toggle3Pin
 } = require('./config.json');
 
-const FIELDS = {'bri': 8, 'hue': 1024, 'sat': 8};
+const FIELDS = {'hue': 1024, 'sat': 8, 'bri': 8};
+const SELECT_PATTERN = [1,2,3,2,1,3];
 
 class RotaryEncoder extends EventEmitter {
-	constructor({a,b,toggle}) {
+	constructor({
+    a1,b1,toggle1,
+    a2,b2,toggle2,
+    a3,b3,toggle3,
+  }) {
 		super();
-		this.gpioA = new Gpio(a, 'in', 'both');
-		this.gpioB = new Gpio(b, 'in', 'both');
-		this.gpioToggle = new Gpio(toggle, 'in', 'rising', { debounceTimeout: 10 });
-		this.gpioA.watch((err, value) => {
+		this.gpio1A = new Gpio(a1, 'in', 'both');
+		this.gpio1B = new Gpio(b1, 'in', 'both');
+		this.gpio1Toggle = new Gpio(toggle1, 'in', 'rising', { debounceTimeout: 10 });
+		this.gpio2A = new Gpio(a2, 'in', 'both');
+		this.gpio2B = new Gpio(b2, 'in', 'both');
+		this.gpio2Toggle = new Gpio(toggle2, 'in', 'rising', { debounceTimeout: 10 });
+		this.gpio3A = new Gpio(a3, 'in', 'both');
+		this.gpio3B = new Gpio(b3, 'in', 'both');
+		this.gpio3Toggle = new Gpio(toggle3, 'in', 'rising', { debounceTimeout: 10 });
+    this._watch(1, this.gpio1A, this.gpio1B, this.gpio1Toggle);
+    this._watch(2, this.gpio2A, this.gpio2B, this.gpio2Toggle);
+    this._watch(3, this.gpio3A, this.gpio3B, this.gpio3Toggle);
+	}
+
+  _watch(index, gpioA,gpioB,gpioToggle) {
+		gpioA.watch((err, value) => {
 			if (err) {
 				this.emit('error', err);
 				return;
@@ -26,24 +45,25 @@ class RotaryEncoder extends EventEmitter {
 			const a = value;
 
 			try {
-				const b = this.gpioB.readSync();
+				const b = gpioB.readSync();
 				if (a === b) {
-					this.emit('rotation', 1);
+					this.emit('rotation'+index, 1);
 				} else {
-					this.emit('rotation', -1);
+					this.emit('rotation'+index, -1);
 				}
 			} catch (ex) {
 				this.emit('error', ex);
 			}
 		});
-		this.gpioToggle.watch((err, value) => {
+		gpioToggle.watch((err, value) => {
 			if (err) {
 				this.emit('error', err);
 				return;
 			}
-			this.emit('toggle');
+			this.emit('toggle'+index);
 		});
-	}
+
+  }
 }
 
 class HueAPI {
@@ -162,6 +182,7 @@ function throttlePromise(fn,{ reduce, debounce, delay } = { reduce: null, deboun
 				completed();
 			}
 		}).catch((e) => {
+      console.log(e.stack);
 			running = false;
 			if (!waiting) {
 				completed();
@@ -203,7 +224,7 @@ class LightGroupController {
 		this.api = api;
 		this.worker = worker;
 		this.groupState = null;
-    this.fieldIndex = 0;
+    this.matchIndex = 0;
 	}
 
 	async init() {
@@ -215,41 +236,68 @@ class LightGroupController {
 
 	async onEvent(event, args) {
     switch (event) {
-      case 'rotation': {
-        const field = Object.keys(FIELDS)[this.fieldIndex];
-        const change = {
-          [field]: FIELDS[field] * args,
-          'on': true
-        };
-        if (this.groupState) {
-          Object.keys(change).forEach(k => {
-            if (typeof change[k] === 'number') {
-              this.groupState[k] += change[k]
-            } else {
-              this.groupState[k] = change[k]
-            }
-          });
-          this.worker.send('lightgroup_control',this.groupState);
-        }
-
-        const response = await this.api.putGroup(this.groupId, Object.keys(change).reduce((prev, next) => {
-          const value = change[next];
-          prev[next + (typeof value  === 'number' ? '_inc' : '')] = value;
-          return prev;
-        }, {}));
-        await this.init();
+      case 'rotation1':
+        await this._rotate('bri', args);
         break;
-      }
+      case 'rotation2':
+        await this._rotate('sat', args);
+        break;
+      case 'rotation3':
+        await this._rotate('hue', args);
+        break;
 
-      case 'toggle': {
-        this.fieldIndex++;
-        if (this.fieldIndex >= Object.keys(FIELDS).length) {
-          this.fieldIndex = 0;
+      case 'toggle1':
+      case 'toggle2':
+      case 'toggle3': {
+        if (this.matchIndex === SELECT_PATTERN.length) {
+          return;
         }
+
+        // check if the user has entered the select screen pattern
+        const index = parseInt(event[event.length - 1],10);
+        if (index === SELECT_PATTERN[this.matchIndex++]) {
+          if (this.matchIndex === SELECT_PATTERN.length) {
+            const newController = new LightGroupSelector(this.api, this.worker);
+            await newController.init();
+            controller = newController;
+            return;
+          }
+        } else {
+          this.matchIndex = 0;
+        }
+
+        const response = await this.api.putGroup(this.groupId, {
+          'on': this.groupState ? !this.groupState.on : true
+        });
+        await this.init();
         break;
       }
     }
 	}
+
+  async _rotate(field, value) {
+    const change = {
+      [field]: FIELDS[field] * value,
+      'on': true
+    };
+    if (this.groupState) {
+      Object.keys(change).forEach(k => {
+        if (typeof change[k] === 'number') {
+          this.groupState[k] += change[k]
+        } else {
+          this.groupState[k] = change[k]
+        }
+      });
+      this.worker.send('lightgroup_control',this.groupState);
+    }
+
+    const response = await this.api.putGroup(this.groupId, Object.keys(change).reduce((prev, next) => {
+      const value = change[next];
+      prev[next + (typeof value  === 'number' ? '_inc' : '')] = value;
+      return prev;
+    }, {}));
+    await this.init();
+  }
 }
 
 class LightGroupSelector {
@@ -270,7 +318,9 @@ class LightGroupSelector {
 
   async onEvent(event, args) {
     switch (event) {
-      case 'rotation': {
+      case 'rotation1':
+      case 'rotation2': 
+      case 'rotation3': {
         this.selected += (args > 0 ? 1: -1);
         if (this.selected >= this.options.length) {
           this.selected = this.options.length - 1;
@@ -284,7 +334,9 @@ class LightGroupSelector {
         break;
       }
 
-      case 'toggle': {
+      case 'toggle1':
+      case 'toggle2':
+      case 'toggle3': {
         const groupId = this.options[this.selected].key;
         console.log('Selected groupId: ' + groupId);
         await storage.setItem('groupId', groupId);
@@ -303,9 +355,15 @@ storage.init().then(async () => {
   const api = new HueAPI(bridgeIp, userId);
   const uiWorker = new Worker();
   const encoder = new RotaryEncoder({
-    a: aPin,
-    b: bPin,
-    toggle: togglePin
+    a1: a1Pin,
+    b1: b1Pin,
+    toggle1: toggle1Pin,
+    a2: a2Pin,
+    b2: b2Pin,
+    toggle2: toggle2Pin,
+    a3: a3Pin,
+    b3: b3Pin,
+    toggle3: toggle3Pin
   });
 
   const groupId = await storage.getItem('groupId');
@@ -317,11 +375,13 @@ storage.init().then(async () => {
   }
   await controller.init();
 
-	encoder.on('rotation', throttlePromise((value) => controller.onEvent('rotation', value), {
-		debounce: 100, 
-		delay: 500, 
-		reduce: (prev, next) => [prev[0] + next[0]]
-	}));
+  for (let i = 1;i <= 3;++i) {
+    encoder.on('rotation'+i, throttlePromise((value) => controller.onEvent('rotation'+i, value), {
+      debounce: 100, 
+      delay: 500, 
+      reduce: (prev, next) => [prev[0] + next[0]]
+    }));
+    encoder.on('toggle'+i,() => controller.onEvent('toggle'+i));
+  }
 
-	encoder.on('toggle',() => controller.onEvent('toggle'));
 });

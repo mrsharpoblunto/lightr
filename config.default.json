@@ -1,7 +1,13 @@
 {
   "bridgeIp": "192.168.0.4",
   "userId": "xyzzy",
-  "aPin": 17,
-  "bPin": 18,
-  "togglePin": 27
+  "a1Pin": 17,
+  "b1Pin": 27,
+  "toggle1Pin": 22,
+  "a2Pin": 9,
+  "b2Pin": 11,
+  "toggle2Pin": 10,
+  "a3Pin": 6,
+  "b3Pin": 13,
+  "toggle3Pin": 5
 }
