@@ -244,7 +244,7 @@ class LightGroupController {
   }
 
   async init() {
-    const {statusCode, body} = await this.api.getGroup(this.groupId);
+    const {body} = await this.api.getGroup(this.groupId);
     this.groupState = body.action;
     this.worker.send('lightgroup_control', body.action);
     return this.groupState;
@@ -282,8 +282,9 @@ class LightGroupController {
           this.matchIndex = 0;
         }
 
-        const response = await this.api.putGroup(this.groupId, {
-          on: this.groupState ? !this.groupState.on : true,
+        const {body} = await this.api.getGroup(this.groupId);
+        await this.api.putGroup(this.groupId, {
+          on: !body.action.on,
         });
         await this.init();
         break;
