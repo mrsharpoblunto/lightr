@@ -20,9 +20,9 @@ The app should now start up (and automatically restart when the Pi is rebooted).
 - 3x rotary encoder switches [Amazon](https://www.amazon.com/gp/product/B06XQTHDRR/ref=ppx_yo_dt_b_search_asin_title?ie=UTF8&psc=1)
 - 1x I2C OLED screen [Amazon](https://www.amazon.com/gp/product/B072Q2X2LL/ref=ppx_yo_dt_b_search_asin_title?ie=UTF8&psc=1)
 - open up config.json and using the [pinout](https://pinout.xyz/) for your Raspberry PI wire up each rotary encoder from the GPIO pin to the following pin on the encoder as follows. So for example using the defaults, GPIO pin 6 would go to rotary encoder 3's DT pin.
- - a<x>Pin -> Encoder<x> DT
- - b<x>Pin -> Encoder<x> CLK
- - toggle<x>Pin -> Encoder<x> SW
+  - a<x>Pin -> Encoder<x> DT
+  - b<x>Pin -> Encoder<x> CLK
+  - toggle<x>Pin -> Encoder<x> SW
 - The I2C screen needs to be hooked up to GPIO pins 2 (SDA) & 3 (SCL)
 
 ![The assembled light controller](/assembly.jpg)
