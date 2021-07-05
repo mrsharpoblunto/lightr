@@ -181,10 +181,13 @@ const uiRenderer = new UIRenderer()
       false,
     );
     oled.setCursor(11, 22);
+    const hour = next.getHours() % 12 || 12;
     oled.writeString(
       font,
       4,
-      `${next.getHours().toString().padStart(2, '0')}:${next.getMinutes().toString().padStart(2, '0')}`,
+      `${hour
+        .toString()
+        .padStart(2, '0')}:${next.getMinutes().toString().padStart(2, '0')}`,
       1,
       false,
     );
